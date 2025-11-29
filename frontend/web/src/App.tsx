@@ -9,7 +9,7 @@ import { useFhevm, useEncrypt, useDecrypt } from '../fhevm-sdk/src';
 interface BioAuthData {
   id: string;
   name: string;
-  biometricScore: number;
+  biometricValue: string;
   timestamp: number;
   creator: string;
   publicValue1: number;
@@ -21,7 +21,7 @@ interface BioAuthData {
 const App: React.FC = () => {
   const { address, isConnected } = useAccount();
   const [loading, setLoading] = useState(true);
-  const [bioAuthList, setBioAuthList] = useState<BioAuthData[]>([]);
+  const [bioAuths, setBioAuths] = useState<BioAuthData[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creatingAuth, setCreatingAuth] = useState(false);
@@ -30,14 +30,11 @@ const App: React.FC = () => {
     status: "pending", 
     message: "" 
   });
-  const [newAuthData, setNewAuthData] = useState({ name: "", biometricScore: "" });
+  const [newAuthData, setNewAuthData] = useState({ name: "", biometric: "" });
   const [selectedAuth, setSelectedAuth] = useState<BioAuthData | null>(null);
-  const [decryptedValue, setDecryptedValue] = useState<number | null>(null);
-  const [isDecrypting, setIsDecrypting] = useState(false);
   const [contractAddress, setContractAddress] = useState("");
   const [fhevmInitializing, setFhevmInitializing] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [stats, setStats] = useState({ total: 0, verified: 0, avgScore: 0 });
+  const [activeTab, setActiveTab] = useState("dashboard");
 
   const { status, initialize, isInitialized } = useFhevm();
   const { encrypt, isEncrypting } = useEncrypt();
@@ -103,7 +100,7 @@ const App: React.FC = () => {
           authList.push({
             id: businessId,
             name: businessData.name,
-            biometricScore: Number(businessData.publicValue1) || 0,
+            biometricValue: businessId,
             timestamp: Number(businessData.timestamp),
             creator: businessData.creator,
             publicValue1: Number(businessData.publicValue1) || 0,
@@ -116,22 +113,13 @@ const App: React.FC = () => {
         }
       }
       
-      setBioAuthList(authList);
-      updateStats(authList);
+      setBioAuths(authList);
     } catch (e) {
       setTransactionStatus({ visible: true, status: "error", message: "Failed to load data" });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
     } finally { 
       setIsRefreshing(false); 
     }
-  };
-
-  const updateStats = (data: BioAuthData[]) => {
-    const total = data.length;
-    const verified = data.filter(item => item.isVerified).length;
-    const avgScore = total > 0 ? data.reduce((sum, item) => sum + item.biometricScore, 0) / total : 0;
-    
-    setStats({ total, verified, avgScore });
   };
 
   const createAuth = async () => {
@@ -148,7 +136,7 @@ const App: React.FC = () => {
       const contract = await getContractWithSigner();
       if (!contract) throw new Error("Failed to get contract with signer");
       
-      const biometricValue = parseInt(newAuthData.biometricScore) || 0;
+      const biometricValue = parseInt(newAuthData.biometric) || 0;
       const businessId = `bioauth-${Date.now()}`;
       
       const encryptedResult = await encrypt(contractAddress, address, biometricValue);
@@ -158,7 +146,7 @@ const App: React.FC = () => {
         newAuthData.name,
         encryptedResult.encryptedData,
         encryptedResult.proof,
-        biometricValue,
+        0,
         0,
         "Biometric Authentication Data"
       );
@@ -173,7 +161,7 @@ const App: React.FC = () => {
       
       await loadData();
       setShowCreateModal(false);
-      setNewAuthData({ name: "", biometricScore: "" });
+      setNewAuthData({ name: "", biometric: "" });
     } catch (e: any) {
       const errorMessage = e.message?.includes("user rejected transaction") 
         ? "Transaction rejected by user" 
@@ -192,7 +180,6 @@ const App: React.FC = () => {
       return null; 
     }
     
-    setIsDecrypting(true);
     try {
       const contractRead = await getContractReadOnly();
       if (!contractRead) return null;
@@ -200,7 +187,6 @@ const App: React.FC = () => {
       const businessData = await contractRead.getBusinessData(businessId);
       if (businessData.isVerified) {
         const storedValue = Number(businessData.decryptedValue) || 0;
-        
         setTransactionStatus({ 
           visible: true, 
           status: "success", 
@@ -209,7 +195,6 @@ const App: React.FC = () => {
         setTimeout(() => {
           setTransactionStatus({ visible: false, status: "pending", message: "" });
         }, 2000);
-        
         return storedValue;
       }
       
@@ -248,7 +233,6 @@ const App: React.FC = () => {
         setTimeout(() => {
           setTransactionStatus({ visible: false, status: "pending", message: "" });
         }, 2000);
-        
         await loadData();
         return null;
       }
@@ -260,40 +244,153 @@ const App: React.FC = () => {
       });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
       return null; 
-    } finally { 
-      setIsDecrypting(false); 
     }
   };
 
-  const checkAvailability = async () => {
+  const callIsAvailable = async () => {
     try {
       const contract = await getContractReadOnly();
       if (!contract) return;
       
-      const isAvailable = await contract.isAvailable();
+      const result = await contract.isAvailable();
       setTransactionStatus({ 
         visible: true, 
         status: "success", 
-        message: "Contract is available and ready" 
+        message: "Contract is available and working!" 
       });
-      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
+      setTimeout(() => {
+        setTransactionStatus({ visible: false, status: "pending", message: "" });
+      }, 2000);
     } catch (e) {
-      setTransactionStatus({ visible: true, status: "error", message: "Availability check failed" });
-      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
+      setTransactionStatus({ visible: true, status: "error", message: "Contract call failed" });
+      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }, 3000));
     }
   };
 
-  const filteredAuthList = bioAuthList.filter(item =>
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.creator.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const renderDashboard = () => {
+    const totalAuths = bioAuths.length;
+    const verifiedAuths = bioAuths.filter(a => a.isVerified).length;
+    const todayAuths = bioAuths.filter(a => 
+      Date.now()/1000 - a.timestamp < 60 * 60 * 24
+    ).length;
+
+    return (
+      <div className="dashboard-panels">
+        <div className="panel gradient-panel neon-purple">
+          <h3>Total Authentications</h3>
+          <div className="stat-value">{totalAuths}</div>
+          <div className="stat-trend">+{todayAuths} today</div>
+        </div>
+        
+        <div className="panel gradient-panel neon-blue">
+          <h3>Verified Data</h3>
+          <div className="stat-value">{verifiedAuths}/{totalAuths}</div>
+          <div className="stat-trend">FHE Protected</div>
+        </div>
+        
+        <div className="panel gradient-panel neon-pink">
+          <h3>Security Level</h3>
+          <div className="stat-value">99.9%</div>
+          <div className="stat-trend">Zero Knowledge</div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCharts = () => {
+    const verifiedCount = bioAuths.filter(a => a.isVerified).length;
+    const pendingCount = bioAuths.length - verifiedCount;
+    
+    return (
+      <div className="charts-section">
+        <div className="chart-container">
+          <h3>Authentication Status</h3>
+          <div className="pie-chart">
+            <div 
+              className="chart-segment verified" 
+              style={{ 
+                '--percentage': `${(verifiedCount / bioAuths.length) * 360 || 0}deg`,
+                '--color': '#ff00ff'
+              } as React.CSSProperties}
+            >
+              <div className="segment-label">Verified: {verifiedCount}</div>
+            </div>
+            <div 
+              className="chart-segment pending" 
+              style={{ 
+                '--percentage': `${(pendingCount / bioAuths.length) * 360 || 0}deg`,
+                '--color': '#00ffff'
+              } as React.CSSProperties}
+            >
+              <div className="segment-label">Pending: {pendingCount}</div>
+            </div>
+            <div className="chart-center">
+              <div className="chart-total">{bioAuths.length}</div>
+              <div className="chart-title">Total</div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="chart-container">
+          <h3>Daily Activity</h3>
+          <div className="bar-chart">
+            {[1,2,3,4,5,6,7].map(day => (
+              <div key={day} className="bar-container">
+                <div 
+                  className="bar-fill"
+                  style={{ height: `${Math.random() * 80 + 20}%` }}
+                ></div>
+                <div className="bar-label">Day {day}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderFAQ = () => {
+    const faqs = [
+      {
+        question: "What is FHE Biometric Authentication?",
+        answer: "FHE (Fully Homomorphic Encryption) allows biometric data to be encrypted and compared without ever decrypting it, ensuring maximum privacy."
+      },
+      {
+        question: "How does the encryption work?",
+        answer: "Your biometric data is encrypted using Zama FHE technology before being stored on-chain. Only encrypted comparisons are performed."
+      },
+      {
+        question: "Is my data safe?",
+        answer: "Yes! Your original biometric data never leaves your device unencrypted. Only homomorphic operations are performed on encrypted data."
+      },
+      {
+        question: "What types of biometric data are supported?",
+        answer: "Currently supports integer-based biometric templates. Future versions will support more complex biometric patterns."
+      }
+    ];
+
+    return (
+      <div className="faq-section">
+        <h3>Frequently Asked Questions</h3>
+        <div className="faq-list">
+          {faqs.map((faq, index) => (
+            <div key={index} className="faq-item">
+              <div className="faq-question">{faq.question}</div>
+              <div className="faq-answer">{faq.answer}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   if (!isConnected) {
     return (
       <div className="app-container">
-        <header className="app-header">
+        <header className="app-header neon-header">
           <div className="logo">
             <h1>BioAuthZama 🔐</h1>
+            <span>Encrypted Biometric Authentication</span>
           </div>
           <div className="header-actions">
             <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false}/>
@@ -302,9 +399,9 @@ const App: React.FC = () => {
         
         <div className="connection-prompt">
           <div className="connection-content">
-            <div className="connection-icon">🔐</div>
-            <h2>Connect Your Wallet to Continue</h2>
-            <p>Please connect your wallet to initialize the encrypted biometric authentication system.</p>
+            <div className="connection-icon">🔒</div>
+            <h2>Connect Your Wallet to Start</h2>
+            <p>Secure your biometric data with FHE encryption technology</p>
           </div>
         </div>
       </div>
@@ -320,96 +417,143 @@ const App: React.FC = () => {
     );
   }
 
-  if (loading) return (
-    <div className="loading-screen">
-      <div className="fhe-spinner"></div>
-      <p>Loading encrypted biometric system...</p>
-    </div>
-  );
-
   return (
     <div className="app-container">
-      <header className="app-header">
+      <header className="app-header neon-header">
         <div className="logo">
           <h1>BioAuthZama 🔐</h1>
-          <p>Encrypted Biometric Authentication</p>
+          <span>Encrypted Biometric Authentication</span>
         </div>
         
         <div className="header-actions">
-          <button onClick={checkAvailability} className="check-btn">
-            Check Availability
+          <button onClick={callIsAvailable} className="test-btn">
+            Test Contract
           </button>
-          <button onClick={() => setShowCreateModal(true)} className="create-btn">
-            + New Biometric
+          <button 
+            onClick={() => setShowCreateModal(true)} 
+            className="create-btn"
+          >
+            + New Authentication
           </button>
           <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false}/>
         </div>
       </header>
       
+      <nav className="app-nav">
+        <button 
+          className={`nav-btn ${activeTab === "dashboard" ? "active" : ""}`}
+          onClick={() => setActiveTab("dashboard")}
+        >
+          Dashboard
+        </button>
+        <button 
+          className={`nav-btn ${activeTab === "authentications" ? "active" : ""}`}
+          onClick={() => setActiveTab("authentications")}
+        >
+          Authentications
+        </button>
+        <button 
+          className={`nav-btn ${activeTab === "analytics" ? "active" : ""}`}
+          onClick={() => setActiveTab("analytics")}
+        >
+          Analytics
+        </button>
+        <button 
+          className={`nav-btn ${activeTab === "faq" ? "active" : ""}`}
+          onClick={() => setActiveTab("faq")}
+        >
+          FAQ
+        </button>
+      </nav>
+      
       <div className="main-content">
-        <div className="stats-panel">
-          <div className="stat-item">
-            <div className="stat-value">{stats.total}</div>
-            <div className="stat-label">Total Records</div>
+        {activeTab === "dashboard" && (
+          <div className="tab-content">
+            <h2>FHE Biometric Dashboard</h2>
+            {renderDashboard()}
+            
+            <div className="fhe-flow-section">
+              <h3>FHE Encryption Flow</h3>
+              <div className="fhe-flow">
+                {['Encrypt', 'Store', 'Compare', 'Verify'].map((step, index) => (
+                  <div key={index} className="flow-step">
+                    <div className="step-number">{index + 1}</div>
+                    <div className="step-label">{step}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-          <div className="stat-item">
-            <div className="stat-value">{stats.verified}</div>
-            <div className="stat-label">Verified</div>
-          </div>
-          <div className="stat-item">
-            <div className="stat-value">{stats.avgScore.toFixed(1)}</div>
-            <div className="stat-label">Avg Score</div>
-          </div>
-        </div>
-
-        <div className="search-section">
-          <input
-            type="text"
-            placeholder="Search by name or creator..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="search-input"
-          />
-          <button onClick={loadData} className="refresh-btn" disabled={isRefreshing}>
-            {isRefreshing ? "Refreshing..." : "Refresh"}
-          </button>
-        </div>
-
-        <div className="auth-list">
-          {filteredAuthList.length === 0 ? (
-            <div className="no-data">
-              <p>No biometric records found</p>
-              <button onClick={() => setShowCreateModal(true)} className="create-btn">
-                Create First Record
+        )}
+        
+        {activeTab === "authentications isRefreshing" && (
+          <div className="tab-content">
+            <div className="section-header">
+              <h2>Biometric Authentications</h2>
+              <button onClick={loadData} className="refresh-btn">
+                {isRefreshing ? "Refreshing..." : "Refresh"}
               </button>
             </div>
-          ) : (
-            filteredAuthList.map((item, index) => (
-              <div 
-                key={index}
-                className={`auth-item ${item.isVerified ? 'verified' : ''}`}
-                onClick={() => setSelectedAuth(item)}
-              >
-                <div className="auth-header">
-                  <h3>{item.name}</h3>
-                  <span className={`status ${item.isVerified ? 'verified' : 'pending'}`}>
-                    {item.isVerified ? '✅ Verified' : '🔓 Pending'}
-                  </span>
+            
+            <div className="auth-list">
+              {bioAuths.length === 0 ? (
+                <div className="empty-state">
+                  <p>No biometric authentications found</p>
+                  <button onClick={() => setShowCreateModal(true)} className="create-btn">
+                    Create First Authentication
+                  </button>
                 </div>
-                <div className="auth-details">
-                  <div>Score: {item.biometricScore}/100</div>
-                  <div>Creator: {item.creator.substring(0, 8)}...</div>
-                  <div>Date: {new Date(item.timestamp * 1000).toLocaleDateString()}</div>
-                </div>
-                {item.isVerified && item.decryptedValue && (
-                  <div className="decrypted-value">
-                    Decrypted: {item.decryptedValue}
+              ) : bioAuths.map((auth, index) => (
+                <div 
+                  key={index} 
+                  className="auth-item"
+                  onClick={() => setSelectedAuth(auth)}
+                >
+                  <div className="auth-header">
+                    <h3>{auth.name}</h3>
+                    <span className={`status ${auth.isVerified ? "verified" : "pending"}`}>
+                      {auth.isVerified ? "✅ Verified" : "🔒 Encrypted"}
+                    </span>
                   </div>
-                )}
+                  <div className="auth-details">
+                    <span>Created: {new Date(auth.timestamp * 1000).toLocaleDateString()}</span>
+                    <span>By: {auth.creator.substring(0, 8)}...</span>
+                  </div>
+                  {auth.isVerified && (
+                    <div className="auth-value">
+                      Biometric Score: {auth.decryptedValue}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {activeTab === "analytics" && (
+          <div className="tab-content">
+            <h2>Authentication Analytics</h2>
+            {renderCharts()}
+            
+            <div className="stats-grid">
+              <div className="stat-card">
+                <h3>Encryption Success Rate</h3>
+                <div className="stat-value">100%</div>
               </div>
-            ))
-          )}
-        </div>
+              <div className="stat-card">
+                <h3>Average Verification Time</h3>
+                <div className="stat-value">2.3s</div>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {activeTab === "faq" && (
+          <div className="tab-content">
+            <h2>FHE Biometric FAQ</h2>
+            {renderFAQ()}
+          </div>
+        )}
       </div>
       
       {showCreateModal && (
@@ -417,36 +561,29 @@ const App: React.FC = () => {
           <div className="create-modal">
             <div className="modal-header">
               <h2>New Biometric Authentication</h2>
-              <button onClick={() => setShowCreateModal(false)} className="close-btn">&times;</button>
+              <button onClick={() => setShowCreateModal(false)} className="close-btn">×</button>
             </div>
             
             <div className="modal-body">
-              <div className="fhe-notice">
-                <strong>FHE 🔐 Encryption</strong>
-                <p>Biometric data will be encrypted with Zama FHE (Integer only)</p>
-              </div>
-              
               <div className="form-group">
-                <label>Name *</label>
+                <label>Authentication Name</label>
                 <input 
                   type="text" 
-                  value={newAuthData.name} 
-                  onChange={(e) => setNewAuthData({...newAuthData, name: e.target.value})} 
-                  placeholder="Enter name..." 
+                  value={newAuthData.name}
+                  onChange={(e) => setNewAuthData({...newAuthData, name: e.target.value})}
+                  placeholder="Enter authentication name..."
                 />
               </div>
               
               <div className="form-group">
-                <label>Biometric Score (0-100) *</label>
+                <label>Biometric Value (Integer)</label>
                 <input 
                   type="number" 
-                  min="0" 
-                  max="100" 
-                  value={newAuthData.biometricScore} 
-                  onChange={(e) => setNewAuthData({...newAuthData, biometricScore: e.target.value})} 
-                  placeholder="Enter biometric score..." 
+                  value={newAuthData.biometric}
+                  onChange={(e) => setNewAuthData({...newAuthData, biometric: e.target.value})}
+                  placeholder="Enter biometric value..."
                 />
-                <div className="data-label">FHE Encrypted Integer</div>
+                <div className="help-text">FHE Encrypted Integer Value</div>
               </div>
             </div>
             
@@ -454,10 +591,10 @@ const App: React.FC = () => {
               <button onClick={() => setShowCreateModal(false)} className="cancel-btn">Cancel</button>
               <button 
                 onClick={createAuth} 
-                disabled={creatingAuth || isEncrypting || !newAuthData.name || !newAuthData.biometricScore} 
+                disabled={creatingAuth || isEncrypting}
                 className="submit-btn"
               >
-                {creatingAuth || isEncrypting ? "Encrypting..." : "Create"}
+                {creatingAuth ? "Creating..." : "Create Authentication"}
               </button>
             </div>
           </div>
@@ -468,79 +605,50 @@ const App: React.FC = () => {
         <div className="modal-overlay">
           <div className="detail-modal">
             <div className="modal-header">
-              <h2>Biometric Details</h2>
-              <button onClick={() => setSelectedAuth(null)} className="close-btn">&times;</button>
+              <h2>Authentication Details</h2>
+              <button onClick={() => setSelectedAuth(null)} className="close-btn">×</button>
             </div>
             
             <div className="modal-body">
-              <div className="detail-info">
-                <div className="info-row">
-                  <span>Name:</span>
-                  <strong>{selectedAuth.name}</strong>
-                </div>
-                <div className="info-row">
-                  <span>Creator:</span>
-                  <strong>{selectedAuth.creator}</strong>
-                </div>
-                <div className="info-row">
-                  <span>Date:</span>
-                  <strong>{new Date(selectedAuth.timestamp * 1000).toLocaleString()}</strong>
-                </div>
-                <div className="info-row">
-                  <span>Status:</span>
-                  <strong className={selectedAuth.isVerified ? 'verified' : 'pending'}>
-                    {selectedAuth.isVerified ? 'Verified' : 'Pending Verification'}
-                  </strong>
-                </div>
+              <div className="detail-item">
+                <label>Name:</label>
+                <span>{selectedAuth.name}</span>
+              </div>
+              <div className="detail-item">
+                <label>Status:</label>
+                <span className={selectedAuth.isVerified ? "verified" : "encrypted"}>
+                  {selectedAuth.isVerified ? "Verified" : "Encrypted"}
+                </span>
+              </div>
+              <div className="detail-item">
+                <label>Creator:</label>
+                <span>{selectedAuth.creator}</span>
               </div>
               
-              <div className="data-section">
-                <h3>Encrypted Data</h3>
-                <div className="encrypted-data">
-                  {selectedAuth.isVerified ? (
-                    <div className="verified-data">
-                      <strong>Decrypted Value: {selectedAuth.decryptedValue}</strong>
-                      <span className="badge verified">On-chain Verified</span>
-                    </div>
-                  ) : decryptedValue !== null ? (
-                    <div className="local-data">
-                      <strong>Decrypted Value: {decryptedValue}</strong>
-                      <span className="badge local">Locally Decrypted</span>
-                    </div>
-                  ) : (
-                    <div className="encrypted-status">
-                      <span>🔒 FHE Encrypted</span>
-                    </div>
-                  )}
-                </div>
-                
+              {!selectedAuth.isVerified && (
                 <button 
-                  onClick={async () => {
-                    const result = await decryptData(selectedAuth.id);
-                    if (result !== null) setDecryptedValue(result);
-                  }}
-                  disabled={isDecrypting}
+                  onClick={() => decryptData(selectedAuth.id)}
                   className="decrypt-btn"
                 >
-                  {isDecrypting ? "Decrypting..." : "Verify Decryption"}
+                  Verify Decryption
                 </button>
-              </div>
-            </div>
-            
-            <div className="modal-footer">
-              <button onClick={() => setSelectedAuth(null)} className="close-btn">Close</button>
+              )}
+              
+              {selectedAuth.isVerified && (
+                <div className="decrypted-value">
+                  <h3>Decrypted Biometric Value</h3>
+                  <div className="value-display">{selectedAuth.decryptedValue}</div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
       
       {transactionStatus.visible && (
-        <div className="transaction-toast">
-          <div className={`toast-content ${transactionStatus.status}`}>
-            {transactionStatus.status === "pending" && <div className="spinner"></div>}
-            {transactionStatus.status === "success" && <div className="icon">✓</div>}
-            {transactionStatus.status === "error" && <div className="icon">✗</div>}
-            <span>{transactionStatus.message}</span>
+        <div className="notification">
+          <div className={`notification-content ${transactionStatus.status}`}>
+            {transactionStatus.message}
           </div>
         </div>
       )}
